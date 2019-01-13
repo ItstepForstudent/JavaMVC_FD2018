@@ -1,108 +1,99 @@
 package org.itstep.mvc.core;
 
 
-
+import org.itstep.mvc.core.annotation.Autowired;
 import org.itstep.mvc.core.annotation.Controller;
 import org.itstep.mvc.core.annotation.GetMapping;
 import org.itstep.mvc.core.annotation.PostMapping;
+import org.itstep.mvc.core.reflectutil.Context;
+import org.itstep.mvc.core.reflectutil.PackageScanner;
 
 
+import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import java.io.File;
 import java.io.IOException;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.net.URL;
 import java.util.*;
 
 @WebServlet("/")
 public class DispatcherServlet extends HttpServlet {
 
-    private static Class[] getClasses(String packageName)
-            throws ClassNotFoundException, IOException {
+    private Context ctx = new Context();
 
-        String path = packageName.replace('.', '/');
-        Enumeration<URL> resources = Thread.currentThread().getContextClassLoader().getResources(path);
-
-        ArrayList<Class> classes = new ArrayList<Class>();
-
-        while (resources.hasMoreElements()) {
-            File directory = new File(resources.nextElement().getFile());
-            classes.addAll(findClasses(directory, packageName));
+    private boolean staticProcess(HttpServletRequest req, HttpServletResponse resp) {
+        String uri = req.getRequestURI();
+        String baseurl = req.getContextPath();
+        if (!uri.startsWith(baseurl + "/static")) return false;
+        try {
+            getServletContext().getNamedDispatcher("default").forward(req, resp);
+        } catch (ServletException | IOException e) {
+            e.printStackTrace();
         }
-
-        return classes.toArray(new Class[classes.size()]);
+        return true;
     }
-    private static List<Class> findClasses(File directory, String packageName) throws ClassNotFoundException {
-        List<Class> classes = new ArrayList<Class>();
-        if (!directory.exists())  return classes;
 
-        File[] files = directory.listFiles();
-        for (File file : files) {
-            if (file.isDirectory()) {
-                classes.addAll(findClasses(file, packageName + "." + file.getName()));
-            } else if (file.getName().endsWith(".class")) {
-                classes.add(Class.forName(packageName + '.' + file.getName().substring(0, file.getName().length() - 6)));
+    private boolean callControllerMethod(Class controller,HttpServletRequest req, HttpServletResponse resp) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException {
+        String uri = req.getRequestURI();
+        String method = req.getMethod();
+        String baseurl = req.getContextPath();
+
+        Method[] methods = controller.getMethods();
+        String testUrl = null;
+        for (Method m : methods) {
+            if (m.isAnnotationPresent(GetMapping.class) && method.equals("GET")) {
+                GetMapping annotation = m.getAnnotation(GetMapping.class);
+                testUrl = annotation.value();
+            } else if (m.isAnnotationPresent(PostMapping.class) && method.equals("POST")) {
+                PostMapping annotation = m.getAnnotation(PostMapping.class);
+                testUrl = annotation.value();
+            }
+
+            if (testUrl != null && (baseurl + testUrl).equals(uri)) {
+                Object o = controller.getConstructor().newInstance();
+
+                for(Field f:controller.getDeclaredFields()){
+                    if(f.isAnnotationPresent(Autowired.class)){
+                        f.setAccessible(true);
+                        Object val = ctx.getInstance(f.getType());
+                        if(val!=null){
+                            f.set(o,val);
+                        }
+                    }
+                }
+
+
+                m.invoke(o, req, resp);
+
+
+                return true;
             }
         }
-        return classes;
+        return false;
     }
-
-
-
-
-    private List<Class> getAllControllers() throws IOException, ClassNotFoundException {
-        Class[] classes = getClasses("org.itstep.mvc");
-        List<Class> controllers = new LinkedList<>();
-        for (Class c:classes){
-            if(c.isAnnotationPresent(Controller.class)) controllers.add(c);
-        }
-        return controllers;
-    }
-
 
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp) {
-
-
-        String uri = req.getRequestURI();
-        String method = req.getMethod();
-        String baseurl = "/mvc";
-
+        if(staticProcess(req,resp)) return;
+        PackageScanner packageScanner = new PackageScanner("org.itstep.mvc");
         try {
-
-            List<Class> controllers = getAllControllers();
+            List<Class> controllers = packageScanner.getClassesWithAnnotation(Controller.class);
 
             boolean isFind = false;
 
-            label:
             for (Class controller : controllers) {
-                Method[] methods= controller.getMethods();
-                String testUrl=null;
-                for (Method m : methods) {
-                    if(m.isAnnotationPresent(GetMapping.class) && method.equals("GET")){
-                        GetMapping annotation = m.getAnnotation(GetMapping.class);
-                        testUrl = annotation.value();
-                    }
-                    else if(m.isAnnotationPresent(PostMapping.class) && method.equals("POST")){
-                        PostMapping annotation = m.getAnnotation(PostMapping.class);
-                        testUrl = annotation.value();
-                    }
-
-                    if(testUrl!=null && (baseurl+ testUrl).equals(uri)){
-                        Object o = controller.getConstructor().newInstance();
-                        m.invoke(o,req,resp);
-                        isFind=true;
-                        break label;
-                    }
+                if(callControllerMethod(controller,req,resp)){
+                    isFind=true;
+                    break;
                 }
             }
 
-
-            if(!isFind){
+            if (!isFind) {
                 resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
                 resp.getWriter().write("404 Not Found");
             }
