@@ -39,7 +39,7 @@ public class UserApiController {
             resp.getWriter().write(gson.toJson(new StatusResponse("error","No all params")));
             return;
         }
-        User u = new User("",name);
+        User u = new User(null,name);
         usersDao.addUser(u);
         resp.getWriter().write(gson.toJson(new StatusResponse("ok","")));
     }

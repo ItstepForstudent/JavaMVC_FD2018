@@ -10,7 +10,7 @@ import org.itstep.mvc.util.JsonFileUtil;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@Component
+
 public class UserDaoJson implements UsersDao{
 
 
@@ -29,7 +29,8 @@ public class UserDaoJson implements UsersDao{
     @Override
     public void addUser(User u) {
         List<User> users = getUsers();
-        u.setId(DigestUtils.md5Hex(new Date().toString()));
+        //u.setId(DigestUtils.md5Hex(new Date().toString()));
+        u.setId(0L);
         users.add(u);
         userFileUtil.saveJsonString(gson.toJson(users));
     }
